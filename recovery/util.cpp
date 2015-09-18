@@ -97,6 +97,11 @@ bool nameMatchesRiscOS(const QString &name)
     return name.contains("risc", Qt::CaseInsensitive);
 }
 
+bool nameMatchesWinIoT(const QString &name)
+{
+    return name.contains("Windows_IoT", Qt::CaseInsensitive);
+}
+
 static uint revision = 0;
 uint readBoardRevision()
 {

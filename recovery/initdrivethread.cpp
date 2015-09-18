@@ -29,6 +29,14 @@ void InitDriveThread::run()
     QDir dir;
 
     emit statusUpdate("Waiting for SD card to be ready");
+
+/*
+QMessageBox::StandardButton answer;
+emit query(tr("Waiting for SD Card"),
+tr("SD Card"),
+&answer);
+*/
+
     while (!QFile::exists("/dev/mmcblk0"))
     {
         QThread::usleep(100);

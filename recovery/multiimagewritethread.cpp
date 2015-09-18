@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QDebug>
+#include <QMessageBox>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSettings>
@@ -31,8 +32,9 @@ void MultiImageWriteThread::addImage(const QString &folder, const QString &flavo
 void MultiImageWriteThread::run()
 {
     /* Calculate space requirements */
-    int totalnominalsize = 0, totaluncompressedsize = 0, numparts = 0, numexpandparts = 0, numext4expandparts = 0;
+    int totalnominalsize = 0, totaluncompressedsize = 0, numparts = 0, numexpandparts = 0, numext4expandparts = 0, part4Size = 0;
     bool RiscOSworkaround = false;
+    bool WinIoTworkaround = false;
     int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
     int availableMB = (getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong()-startSector)/2048;
 
@@ -91,6 +93,21 @@ void MultiImageWriteThread::run()
             totalnominalsize += (RISCOS_SECTOR_OFFSET - startSector)/2048;
             RiscOSworkaround = true;
         }
+
+/*
+QMessageBox::StandardButton answer;
+emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
+*/
+
+        if (nameMatchesWinIoT(folder))
+        {
+            /* Windows IoT MainOS Partition cannot be an extended partition.
+               The extended partition must be reduced and the MainOS added
+               to partition 4
+            */
+            WinIoTworkaround = true;
+            part4Size = 4400 * 1024 * 2;
+        }
     }
 
     /* 4 MB overhead per partition (logical partition table) */
@@ -112,8 +129,17 @@ void MultiImageWriteThread::run()
         return;
     }
 
+    if (WinIoTworkaround)
+    {
+        emit statusUpdate(tr("Reallocating space for Windows IoT"));
+
+        if (!relocateExtToPart4(part4Size))
+            return;
+    }
+
     emit statusUpdate(tr("Clearing existing EBR"));
     clearEBR();
+
 
     /* Install RiscOS first */
     if (RiscOSworkaround)
@@ -166,7 +192,7 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
         if (!emptyfs && tarball.isEmpty())
         {
             /* If no tarball URL is specified, we expect the tarball to reside in the folder and be named <label.tar.xz> */
-            if (fstype == "raw")
+            if (fstype == "raw" || fstype == "ntfs" || fstype == "NTFS")
                 tarball = folder+"/"+label+".xz";
             else
                 tarball = folder+"/"+label+".tar.xz";
@@ -212,6 +238,8 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
             parttype = 0x0c; /* FAT32 LBA */
         else if (fstype == "swap")
             parttype = 0x82;
+        else if (fstype == "NTFS" || fstype == "ntfs")
+            parttype = 0x07; /* NTFS */
         else
             parttype = 0x83; /* Linux native */
 
@@ -222,13 +250,29 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
             specialOffset = RISCOS_SECTOR_OFFSET - startSector - 2048;
         }
 
-        emit statusUpdate(tr("%1: Creating partition entry").arg(os_name));
-        if (!addPartitionEntry(partsizeSectors, parttype, specialOffset))
-            return false;
 
-        if (fstype == "raw")
+        if (nameMatchesWinIoT(folder) && (fstype == "NTFS" || fstype == "ntfs"))
+        {
+            /* Let Windows IoT uses primary partition 4, not extended partitions*/
+            partdevice = "/dev/mmcblk0p4";
+            _part--;
+        }
+        else
+        {
+            emit statusUpdate(tr("%1: Creating partition entry").arg(os_name));
+            if (!addPartitionEntry(partsizeSectors, parttype, specialOffset))
+                return false;
+        }
+
+        if (fstype == "raw" || fstype == "NTFS" || fstype == "ntfs")
         {
             emit statusUpdate(tr("%1: Writing OS image").arg(os_name));
+
+/*
+QMessageBox::StandardButton answer;
+emit query(tr("unpacking '%1' to '%2' folder '%3' fstype '%4'").arg(tarball, QString(partdevice), folder, QString(fstype)),
+tr("HeyThere"), &answer);
+*/
             if (!dd(tarball, partdevice))
                 return false;
         }
@@ -360,7 +404,7 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
         }
     }
 
-emit statusUpdate(tr("%1: Unmounting FAT partition").arg(os_name));
+    emit statusUpdate(tr("%1: Unmounting FAT partition").arg(os_name));
     if (QProcess::execute("umount /mnt2") != 0)
     {
         emit error(tr("%1: Error unmounting").arg(os_name));
@@ -386,6 +430,66 @@ emit statusUpdate(tr("%1: Unmounting FAT partition").arg(os_name));
     QProcess::execute("mount -o remount,rw /settings");
     Json::saveToFile("/settings/installed_os.json", installed_os);
     QProcess::execute("mount -o remount,ro /settings");
+
+    return true;
+}
+
+bool MultiImageWriteThread::relocateExtToPart4(int size)
+{
+    /* Unmount everything before modifying partition table */
+    QProcess::execute("umount -r /mnt");
+    QProcess::execute("umount -r /settings");
+
+    int startOfExtended = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
+    int startOfSettings = getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong();
+    int sizeOfExtended = startOfSettings - startOfExtended;
+
+    if (size > sizeOfExtended)
+    {
+        emit error(tr("Error reallocating extended partition - partition too large"));
+        return false;
+    }
+
+    /* Let sfdisk update the extended partition */
+    QString cmd = QString("/sbin/sfdisk -uS /dev/mmcblk0 -N2");
+    QByteArray partition;
+    partition = QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended - size)+",X\n";                                       
+    
+    QProcess proc;
+    proc.setProcessChannelMode(proc.MergedChannels);
+    proc.start(cmd);
+    proc.write(partition);
+    proc.closeWriteChannel();
+    proc.waitForFinished(-1);
+    if (proc.exitCode() != 0)
+    {
+        emit error(tr("Error resizing extended partition")+"\n"+proc.readAll());
+        return false;
+    }
+    qDebug() << "sfdisk done, output:" << proc.readAll();
+    QThread::msleep(500);
+
+    /* Let sfdisk add partition 4 NTFS */
+    cmd = QString("/sbin/sfdisk -uS /dev/mmcblk0 -N4");
+    partition = QByteArray::number(startOfSettings - size)+","+QByteArray::number(size)+",7\n";                                       
+    
+    QProcess proc2;
+    proc2.setProcessChannelMode(proc.MergedChannels);
+    proc2.start(cmd);
+    proc2.write(partition);
+    proc2.closeWriteChannel();
+    proc2.waitForFinished(-1);
+    if (proc2.exitCode() != 0)
+    {
+        emit error(tr("Error creating partition 4")+"\n"+proc.readAll());
+        return false;
+    }
+    qDebug() << "sfdisk done, output:" << proc.readAll();
+    QThread::msleep(500);
+
+    /* Remount */
+    QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
+    QProcess::execute("mount -t ext4 /dev/mmcblk0p3 /settings");
 
     return true;
 }
@@ -561,7 +665,7 @@ bool MultiImageWriteThread::untar(const QString &tarball)
     }
     else
     {
-        emit error(tr("Unknown compression format file extension. Expecting .lzo, .gz, .xz, .bz2 or .zip"));
+        emit error(tr("Unknown compression format file extension. Expecting .lzo, .gz, .xz, .bz2 or .zip\n%1").arg(tarball));
         return false;
     }
     if (!tarball.startsWith("http:"))
@@ -623,7 +727,7 @@ bool MultiImageWriteThread::dd(const QString &imagePath, const QString &device)
     }
     else
     {
-        emit error(tr("Unknown compression format file extension. Expecting .lzo, .gz, .xz, .bz2 or .zip"));
+        emit error(tr("Unknown compression format file extension. Expecting .lzo, .gz, .xz, .bz2 or .zip\n%1 %2").arg(imagePath,device));
         return false;
     }
 

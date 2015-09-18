@@ -1443,6 +1443,9 @@ void MainWindow::startImageWrite()
     connect(imageWriteThread, SIGNAL(statusUpdate(QString)), _qpd, SLOT(setLabelText(QString)));
     connect(imageWriteThread, SIGNAL(runningMKFS()), _qpd, SLOT(pauseIOaccounting()), Qt::BlockingQueuedConnection);
     connect(imageWriteThread, SIGNAL(finishedMKFS()), _qpd , SLOT(resumeIOaccounting()), Qt::BlockingQueuedConnection);
+    connect(imageWriteThread, SIGNAL(query(QString, QString, QMessageBox::StandardButton*)),
+                this, SLOT(onQuery(QString, QString, QMessageBox::StandardButton*)),
+                Qt::BlockingQueuedConnection);
     imageWriteThread->start();
     hide();
     _qpd->exec();

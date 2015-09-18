@@ -2,6 +2,7 @@
 #define MULTIIMAGEWRITETHREAD_H
 
 #include <QThread>
+#include <QMessageBox>
 #include <QStringList>
 #include <QMultiMap>
 #include <QVariantList>
@@ -17,6 +18,7 @@ protected:
     virtual void run();
     void clearEBR();
     bool processImage(const QString &folder, const QString &flavour);
+    bool relocateExtToPart4(int sizeInSectors);
     bool addPartitionEntry(int sizeInSectors, int type, int specialOffset = 0);
     bool mkfs(const QByteArray &device, const QByteArray &fstype = "ext4", const QByteArray &label = "", const QByteArray &mkfsopt = "");
     bool dd(const QString &imagePath, const QString &device);
@@ -39,6 +41,8 @@ signals:
     void completed();
     void runningMKFS();
     void finishedMKFS();
+
+void query(const QString &msg, const QString &title, QMessageBox::StandardButton* answer);
     
 public slots:
     
