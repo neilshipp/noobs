@@ -171,13 +171,11 @@ emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
 
 bool MultiImageWriteThread::processImage(const QString &folder, const QString &flavour)
 {
-
-    int firstPartition = _part;
-
     QString os_name = (folder.split("/")).at(3);
 
     qDebug() << "Processing OS:" << os_name;
 
+    QVariantList vpartitions;
     QVariantList partitions = Json::loadFromFile(folder+"/partitions.json").toMap().value("partitions").toList();
     foreach (QVariant pv, partitions)
     {
@@ -253,8 +251,14 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
 
         if (nameMatchesWinIoT(folder) && (fstype == "NTFS" || fstype == "ntfs"))
         {
-            /* Let Windows IoT uses primary partition 4, not extended partitions*/
+            /* Windows IoT uses primary partition 4, not extended partitions*/
             partdevice = "/dev/mmcblk0p4";
+            _part--;
+        }
+        else if (nameMatchesWinIoT(folder) && (fstype == "FAT" || fstype == "fat"))
+        {
+            /* Windows IoT uses primary partition 2, not extended partitions*/
+            partdevice = "/dev/mmcblk0p2";
             _part--;
         }
         else
@@ -307,11 +311,12 @@ tr("HeyThere"), &answer);
             }
         }
 
+        vpartitions.append(partdevice);
         _part++;
     }
 
     emit statusUpdate(tr("%1: Mounting FAT partition").arg(os_name));
-    if (QProcess::execute("mount /dev/mmcblk0p"+QString::number(firstPartition)+" /mnt2") != 0)
+    if (QProcess::execute("mount "+vpartitions.at(0).toString()+" /mnt2") != 0)
     {
         emit error(tr("%1: Error mounting file system").arg(os_name));
         return false;
@@ -320,11 +325,6 @@ tr("HeyThere"), &answer);
     emit statusUpdate(tr("%1: Creating os_config.json").arg(os_name));
 
     QString description = getDescription(folder, flavour);
-    QVariantList vpartitions;
-    for (int i=firstPartition; i<_part; i++)
-    {
-        vpartitions.append("/dev/mmcblk0p"+QString::number(i));
-    }
     QSettings settings("/settings/noobs.conf", QSettings::IniFormat);
     int videomode = settings.value("display_mode", 0).toInt();
     QString language = settings.value("language", "en").toString();
@@ -369,9 +369,9 @@ tr("HeyThere"), &answer);
          *  partition_setup.sh part1=/dev/mmcblk0p3 id1=LABEL=BOOT part2=/dev/mmcblk0p4
          *  id2=UUID=550e8400-e29b-41d4-a716-446655440000
          */
-        for (int i=firstPartition, pcount = 1; i<_part; i++, pcount++)
+        for (int i=0, pcount = 1; i < vpartitions.length(); i++, pcount++)
         {
-            QString part  = "/dev/mmcblk0p"+QString::number(i);
+            QString part  = vpartitions.at(i).toString();
             QString nr    = QString::number(pcount);
             QString uuid  = getUUID(part);
             QString label = getLabel(part);
@@ -482,6 +482,28 @@ bool MultiImageWriteThread::relocateExtToPart4(int size)
     if (proc2.exitCode() != 0)
     {
         emit error(tr("Error creating partition 4")+"\n"+proc.readAll());
+        return false;
+    }
+    qDebug() << "sfdisk done, output:" << proc.readAll();
+    QThread::msleep(500);
+
+//
+// Hack - rewrite partition 2 to EFIESP partition until we get VHD's working
+//
+    
+    /* Let sfdisk add partition 2 FAT32 */
+    cmd = QString("/sbin/sfdisk -uS /dev/mmcblk0 -N2");
+    partition = QByteArray::number(startOfExtended)+","+QByteArray::number(131072)+",c\n";
+    
+    QProcess proc3;
+    proc3.setProcessChannelMode(proc.MergedChannels);
+    proc3.start(cmd);
+    proc3.write(partition);
+    proc3.closeWriteChannel();
+    proc3.waitForFinished(-1);
+    if (proc3.exitCode() != 0)
+    {
+        emit error(tr("Error creating partition 2")+"\n"+proc.readAll());
         return false;
     }
     qDebug() << "sfdisk done, output:" << proc.readAll();

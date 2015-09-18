@@ -40,7 +40,8 @@ void reboot_to_extended(const QString &defaultPartition, bool setDisplayMode)
     QProcess::execute("umount -r /mnt");
     QProcess::execute("umount -r /settings");
 
-    if (QFile::exists("/dev/mmcblk0p7"))
+    if (QFile::exists("/dev/mmcblk0p7") ||
+        (QFile::exists("/dev/mmcblk0p4") && QFile::exists("/dev/mmcblk0p5")))
     {
 #ifdef Q_WS_QWS
         QWSServer::setBackground(Qt::white);
@@ -149,14 +150,25 @@ int main(int argc, char *argv[])
 
     // If -runinstaller is not specified, only continue if SHIFT is pressed, GPIO is triggered,
     // or no OS is installed (/dev/mmcblk0p5 does not exist)
+    bool part5 = QFile::exists(FAT_PARTITION_OF_IMAGE);
+    bool part4 = QFile::exists("/dev/mmcblk0p4");
+
     bool bailout = !runinstaller
         && !force_trigger
         && !(gpio_trigger && (gpio.value() == 0 ))
         && !(keyboard_trigger && KeyDetection::isF10pressed())
-        && QFile::exists(FAT_PARTITION_OF_IMAGE);
+        && (part5 || part4);
 
     // Default to booting first extended partition
-    setRebootPartition("5");
+    // or windows partition
+    if (QFile::exists("/dev/mmcblk0p4"))
+    {
+        setRebootPartition("2");
+    }
+    else
+    {
+        setRebootPartition("5");
+    }
 
     if (bailout)
     {

@@ -84,6 +84,11 @@ MainWindow::MainWindow(const QString &defaultDisplay, QSplashScreen *splash, QWi
 
     if (qApp->arguments().contains("-runinstaller") && !_partInited)
     {
+        QMessageBox::warning(this,
+                                        tr("Confirm"),
+                                        tr("Warning: setting up SD card."),
+                                        QMessageBox::Yes, QMessageBox::No);
+
         /* Repartition SD card first */
         _partInited = true;
         setEnabled(false);
