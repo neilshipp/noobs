@@ -106,6 +106,7 @@ emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
                to partition 4
             */
             WinIoTworkaround = true;
+// HACK - this needs to be read from json file
             part4Size = 4400 * 1024 * 2;
         }
     }
@@ -136,9 +137,12 @@ emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
         if (!relocateExtToPart4(part4Size))
             return;
     }
-
-    emit statusUpdate(tr("Clearing existing EBR"));
-    clearEBR();
+    else
+    {
+        // HACK - Windows can't have nice things
+        emit statusUpdate(tr("Clearing existing EBR"));
+        clearEBR();
+    }
 
 
     /* Install RiscOS first */
@@ -270,7 +274,7 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
 
         if (fstype == "raw" || fstype == "NTFS" || fstype == "ntfs")
         {
-            emit statusUpdate(tr("%1: Writing OS image").arg(os_name));
+            emit statusUpdate(tr("%1: Writing OS image %2").arg(os_name, tarball));
 
 /*
 QMessageBox::StandardButton answer;
@@ -298,27 +302,33 @@ tr("HeyThere"), &answer);
                 }
 
                 if (tarball.startsWith("http"))
-                    emit statusUpdate(tr("%1: Downloading and extracting filesystem").arg(os_name));
+                    emit statusUpdate(tr("%1: Downloading and extracting filesystem %2").arg(os_name, tarball));
                 else
-                    emit statusUpdate(tr("%1: Extracting filesystem").arg(os_name));
+                    emit statusUpdate(tr("%1: Extracting filesystem %2").arg(os_name, tarball));
 
                 bool result = untar(tarball);
 
-                QProcess::execute("umount /mnt2");
+                if (QProcess::execute("umount /mnt2") !=0)
+                {
+                    emit error(tr("%1: Error unmounting file system").arg(os_name));
+                    return false;
+                }
 
                 if (!result)
                     return false;
             }
         }
+        QThread::msleep(5000);
 
         vpartitions.append(partdevice);
         _part++;
     }
 
-    emit statusUpdate(tr("%1: Mounting FAT partition").arg(os_name));
-    if (QProcess::execute("mount "+vpartitions.at(0).toString()+" /mnt2") != 0)
+    QString firstPartition = vpartitions.at(0).toString();
+    emit statusUpdate(tr("%1: Mounting FAT partition %2").arg(os_name, firstPartition));
+    if (QProcess::execute("mount "+firstPartition+" /mnt2") != 0)
     {
-        emit error(tr("%1: Error mounting file system").arg(os_name));
+        emit error(tr("%1: Error mounting file system %2").arg(os_name, firstPartition));
         return false;
     }
 
@@ -404,6 +414,23 @@ tr("HeyThere"), &answer);
         }
     }
 
+    if (nameMatchesWinIoT(folder))
+    {
+        quint32 diskSig = getDiskSignature();
+        quint32 oldSig = 0xAE420040;
+        quint64 oldEFI = 0x00200000;
+        quint64 oldMainOS = 0x04800000;
+        quint64 newEFI = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong() * 512;
+        quint64 newMainOS = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong() * 512;
+        
+        emit statusUpdate(tr("Rewriting Windows BCD file"));
+        if (!updateWindowsBCD(oldSig, diskSig, oldEFI, newEFI, oldMainOS, newMainOS))
+        {
+            return false;
+        }
+        QThread::msleep(5000);
+    }
+
     emit statusUpdate(tr("%1: Unmounting FAT partition").arg(os_name));
     if (QProcess::execute("umount /mnt2") != 0)
     {
@@ -467,7 +494,7 @@ bool MultiImageWriteThread::relocateExtToPart4(int size)
         return false;
     }
     qDebug() << "sfdisk done, output:" << proc.readAll();
-    QThread::msleep(500);
+    QThread::msleep(2000);
 
     /* Let sfdisk add partition 4 NTFS */
     cmd = QString("/sbin/sfdisk -uS /dev/mmcblk0 -N4");
@@ -481,11 +508,11 @@ bool MultiImageWriteThread::relocateExtToPart4(int size)
     proc2.waitForFinished(-1);
     if (proc2.exitCode() != 0)
     {
-        emit error(tr("Error creating partition 4")+"\n"+proc.readAll());
+        emit error(tr("Error creating partition 4")+"\n"+proc2.readAll());
         return false;
     }
     qDebug() << "sfdisk done, output:" << proc.readAll();
-    QThread::msleep(500);
+    QThread::msleep(2000);
 
 //
 // Hack - rewrite partition 2 to EFIESP partition until we get VHD's working
@@ -503,11 +530,14 @@ bool MultiImageWriteThread::relocateExtToPart4(int size)
     proc3.waitForFinished(-1);
     if (proc3.exitCode() != 0)
     {
-        emit error(tr("Error creating partition 2")+"\n"+proc.readAll());
+        emit error(tr("Error creating partition 2")+"\n"+proc3.readAll());
         return false;
     }
     qDebug() << "sfdisk done, output:" << proc.readAll();
-    QThread::msleep(500);
+    QThread::msleep(2000);
+
+    QProcess::execute("/usr/sbin/partprobe");
+    QThread::msleep(1500);
 
     /* Remount */
     QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
@@ -530,6 +560,18 @@ void MultiImageWriteThread::clearEBR()
     f.seek(qint64(startOfExtended)*512);
     f.write((char *) &ebr, sizeof(ebr));
     f.close();
+}
+
+quint32 MultiImageWriteThread::getDiskSignature()
+{
+    quint32 signature;
+
+    QFile f("/dev/mmcblk0");
+    f.open(f.ReadOnly);
+    f.seek(qint64(0x1b8));
+    f.read((char *)&signature, sizeof(signature));
+    f.close();
+    return signature;
 }
 
 bool MultiImageWriteThread::addPartitionEntry(int sizeInSectors, int type, int specialOffset)
@@ -652,6 +694,73 @@ bool MultiImageWriteThread::mkfs(const QByteArray &device, const QByteArray &fst
     return true;
 }
 
+QByteArray MultiImageWriteThread::generateBCDSignature(
+    quint32 diskSignature, quint64 partitionOffset)
+{
+    QByteArray signature(28, '\0');
+    signature[20] = 0x01;
+    signature.replace(24, sizeof(diskSignature), (const char *)&diskSignature, sizeof(diskSignature));
+    signature.replace(0, sizeof(partitionOffset), (const char *)&partitionOffset, sizeof(partitionOffset));
+
+    return signature;
+}
+   
+bool MultiImageWriteThread::updateWindowsBCD(
+    quint32 oldDiskSignature, quint32 newDiskSignature,
+    quint64 oldEFIOffset, quint64 newEFIOffset,
+    quint64 oldMainOsOffset, quint64 newMainOsOffset)
+{
+    QFile f("/mnt2/EFI/Microsoft/boot/bcd");
+    
+    if (!f.open(f.ReadWrite))
+    {
+        emit error(tr("Error opening /mnt2/EFI/Microsoft/boot/bcd for writing"));
+        return false;
+    }
+
+    QByteArray bcd = f.readAll();
+    QByteArray oldEfiSig, newEfiSig, oldMainOsSig, newMainOsSig;
+
+    oldEfiSig = generateBCDSignature(oldDiskSignature, oldEFIOffset);
+    newEfiSig = generateBCDSignature(newDiskSignature, newEFIOffset);
+   
+    oldMainOsSig = generateBCDSignature(oldDiskSignature, oldMainOsOffset);
+    newMainOsSig = generateBCDSignature(newDiskSignature, newMainOsOffset);
+   
+// hack
+
+    QFile sig1("/mnt2/oldEFI");
+    sig1.open(f.WriteOnly);
+    sig1.write(oldEfiSig);
+    sig1.close();
+    
+    QFile sig2("/mnt2/oldMainOs");
+    sig2.open(f.WriteOnly);
+    sig2.write(oldMainOsSig);
+    sig2.close();
+    
+    QFile sig3("/mnt2/oldBCD");
+    sig3.open(f.WriteOnly);
+    sig3.write(bcd);
+    sig3.close();
+    
+    if (bcd.count(oldEfiSig) < 1 || bcd.count(oldMainOsSig) < 1)
+    {
+        f.close();
+        emit error(tr("Cannot find partition information in Windows BCD file"));
+        return false;
+    }
+    
+    bcd.replace(oldEfiSig, newEfiSig);
+    bcd.replace(oldMainOsSig, newMainOsSig);
+    
+    f.reset();
+    f.write(bcd);
+    f.close();
+
+    return true;
+}
+
 bool MultiImageWriteThread::isLabelAvailable(const QByteArray &label)
 {
     return (QProcess::execute("/sbin/findfs LABEL="+label) != 0);
@@ -692,6 +801,7 @@ bool MultiImageWriteThread::untar(const QString &tarball)
     }
     if (!tarball.startsWith("http:"))
     {
+
         cmd += " "+tarball;
     }
     cmd += " | tar x -C /mnt2 ";

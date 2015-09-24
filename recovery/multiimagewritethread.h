@@ -19,6 +19,11 @@ protected:
     void clearEBR();
     bool processImage(const QString &folder, const QString &flavour);
     bool relocateExtToPart4(int sizeInSectors);
+    QByteArray generateBCDSignature( quint32 diskSignature, quint64 partitionOffset);
+    bool updateWindowsBCD( quint32 oldDiskSignature, quint32 newDiskSignature,
+        quint64 oldEFIOffset, quint64 oldMainOsOffset,
+        quint64 newEFIOffset, quint64 newMainOsOffset);
+    quint32 getDiskSignature();
     bool addPartitionEntry(int sizeInSectors, int type, int specialOffset = 0);
     bool mkfs(const QByteArray &device, const QByteArray &fstype = "ext4", const QByteArray &label = "", const QByteArray &mkfsopt = "");
     bool dd(const QString &imagePath, const QString &device);
