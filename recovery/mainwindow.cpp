@@ -188,12 +188,11 @@ void MainWindow::populate()
 
     }
 
-
     QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
 
     // Fill in list of images
     repopulate();
-    _availableMB = (getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong()-getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong())/2048;
+    _availableMB = (sizeofSDCardInBlocks() - SETTINGS_PARTITION_SIZE - EBR_PARTITION_OFFSET - getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong())/2048;
     updateNeeded();
 
     if (ui->list->count() != 0)
@@ -965,8 +964,11 @@ void MainWindow::rebuildInstalledList()
     dir.mkdir("/mnt2");
     QVariantList installedlist;
 
-    for (int i=5; i<=MAXIMUM_PARTITIONS; i++)
+    for (int i=3; i<=MAXIMUM_PARTITIONS; i++)
     {
+        if (i==5)
+            continue;  // skip the settings partition
+
         QString part = "/dev/mmcblk0p"+QString::number(i);
 
         if (QFile::exists(part) && QProcess::execute("mount -t vfat "+part+" /mnt2") == 0)

@@ -30,13 +30,6 @@ void InitDriveThread::run()
 
     emit statusUpdate("Waiting for SD card to be ready");
 
-/*
-QMessageBox::StandardButton answer;
-emit query(tr("Waiting for SD Card"),
-tr("SD Card"),
-&answer);
-*/
-
     while (!QFile::exists("/dev/mmcblk0"))
     {
         QThread::usleep(100);
@@ -282,23 +275,26 @@ bool InitDriveThread::method_resizePartitions()
     mbr_table extended_mbr;
     QByteArray partitionTable;
     int startOfOurPartition = getFileContents("/sys/class/block/mmcblk0p1/start").trimmed().toInt();
-    int sizeOfOurPartition  = getFileContents("/sys/class/block/mmcblk0p1/size").trimmed().toInt();
-    int startOfExtended = startOfOurPartition+sizeOfOurPartition;
+    int sizeOfOurPartition = getFileContents("/sys/class/block/mmcblk0p1/size").trimmed().toInt();
+    int startOfExtended = startOfOurPartition + sizeOfOurPartition;
     // Align on 4 MiB boundary
     startOfExtended += 8192-(startOfExtended % 8192);
-
-    int sizeOfDisk = getFileContents("/sys/class/block/mmcblk0/size").trimmed().toULongLong();
-    int sizeOfExtended = sizeOfDisk - startOfExtended - SETTINGS_PARTITION_SIZE ;
-    int startOfSettings = startOfExtended+sizeOfExtended;
+    
+    int sizeOfDisk = sizeofSDCardInBlocks();
+    int sizeOfExtended = sizeOfDisk - startOfExtended;
 
     partitionTable  = QByteArray::number(startOfOurPartition)+","+QByteArray::number(sizeOfOurPartition)+",0E\n"; /* FAT partition */
     partitionTable += QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended)+",X\n"; /* Extended partition with all remaining space */
-    partitionTable += QByteArray::number(startOfSettings)+",,L\n"; /* Settings partition */
+    partitionTable += "0,0\n";
     partitionTable += "0,0\n";
     qDebug() << "Writing partition table" << partitionTable;
 
-    /* Write out empty extended partition table with signature */
+    /* Write out extended partition table with settings logical partition */
     memset(&extended_mbr, 0, sizeof extended_mbr);
+    extended_mbr.part[0].starting_sector = EBR_PARTITION_OFFSET;
+    extended_mbr.part[0].nr_of_sectors = SETTINGS_PARTITION_SIZE;
+    extended_mbr.part[0].id = 0x83;
+
     extended_mbr.signature[0] = 0x55;
     extended_mbr.signature[1] = 0xAA;
     f.open(f.ReadWrite);
@@ -363,16 +359,6 @@ int InitDriveThread::sizeofBootFilesInKB()
     return proc.readAll().split('\t').first().toInt();
 }
 
-int InitDriveThread::sizeofSDCardInBlocks()
-{
-    QFile f("/sys/class/block/mmcblk0/size");
-    f.open(f.ReadOnly);
-    int blocks = f.readAll().trimmed().toULongLong();
-    f.close();
-
-    return blocks;
-}
-
 bool InitDriveThread::mountSystemPartition()
 {
     return QProcess::execute("mount /dev/mmcblk0p1 /mnt") == 0 || QProcess::execute("mount /dev/mmcblk0 /mnt") == 0;
@@ -412,20 +398,18 @@ bool InitDriveThread::partitionDrive()
      * First 1MB (2048 blocks) kept empty for alignment
      * Followed by FAT partition of RESCUE_PARTITION_SIZE (default 1 GB)
      * Followed by extended partition spanning remainder of space
-     * Followed by NOOBS persistent settings partition
      */
     QByteArray partitionTable;
     int rescueBlocks = RESCUE_PARTITION_SIZE*1024*2;
 
     mbr_table extended_mbr;
     int startOfExtended = 2048+rescueBlocks;
-    int sizeOfDisk = getFileContents("/sys/class/block/mmcblk0/size").trimmed().toULongLong();
-    int sizeOfExtended = sizeOfDisk - startOfExtended - SETTINGS_PARTITION_SIZE;
-    int startOfSettings = startOfExtended + sizeOfExtended;
+    int sizeOfDisk = sizeofSDCardInBlocks();
+    int sizeOfExtended = sizeOfDisk - startOfExtended;
 
     partitionTable = "2048,"+QByteArray::number(rescueBlocks)+",0E\n"; /* FAT partition */
     partitionTable += QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended)+",X\n"; /* Extended partition with all remaining space */
-    partitionTable += QByteArray::number(startOfSettings)+",,L\n"; /* Settings partition */
+    partitionTable += "0,0\n";
     partitionTable += "0,0\n";
 
     /* Write out empty extended partition table with signature */

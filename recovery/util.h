@@ -22,4 +22,6 @@ bool nameMatchesWinIoT(const QString &name);
 uint readBoardRevision();
 bool canBootOs(const QString& name, const QVariantMap& values);
 bool setRebootPartition(QByteArray partition);
+int sizeofSDCardInBlocks();
+
 #endif // UTIL_H

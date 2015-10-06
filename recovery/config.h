@@ -28,18 +28,20 @@
  * If you want the second partition to start at offset 1024 MB, enter 1023 */
 #define RESCUE_PARTITION_SIZE  63
 
-/* Files that are currently on the FAT partition are normaaly saved to memory during
+/* Files that are currently on the FAT partition are normally saved to memory during
  * repartitioning.
  * If files they are larger than number of MB, try resizing the FAT partition instead */
 #define MAXIMUM_BOOTFILES_SIZE  64
 
-#define SETTINGS_PARTITION  "/dev/mmcblk0p3"
+#define SETTINGS_PARTITION  "/dev/mmcblk0p5"
 #define SETTINGS_PARTITION_SIZE  (32 * 2048)
+
+#define EBR_PARTITION_OFFSET  2048
 
 /* If the image name matches this exactly, mark it as recommended */
 #define RECOMMENDED_IMAGE "Raspbian"
 
-#define FAT_PARTITION_OF_IMAGE  "/dev/mmcblk0p5"
+#define FAT_PARTITION_OF_IMAGE  "/dev/mmcblk0p6"
 
 /* RiscOS magic */
 #define RISCOS_OFFSET_KEY "riscos_offset"

@@ -28,7 +28,6 @@ protected:
     bool saveBootFiles();
     bool restoreBootFiles();
     int sizeofBootFilesInKB();
-    int sizeofSDCardInBlocks();
     bool mountSystemPartition();
     bool umountSystemPartition();
     bool zeroMbr();

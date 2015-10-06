@@ -16,7 +16,7 @@
 #include <sys/ioctl.h>
 
 MultiImageWriteThread::MultiImageWriteThread(QObject *parent) :
-    QThread(parent), _extraSpacePerPartition(0), _part(5)
+    QThread(parent), _extraSpacePerPartition(0), _part(6)
 {
     QDir dir;
 
@@ -32,12 +32,20 @@ void MultiImageWriteThread::addImage(const QString &folder, const QString &flavo
 void MultiImageWriteThread::run()
 {
     /* Calculate space requirements */
-    int totalnominalsize = 0, totaluncompressedsize = 0, numparts = 0, numexpandparts = 0, numext4expandparts = 0, part4Size = 0;
+    int totalnominalsize = 0, totaluncompressedsize = 0, numparts = 0, numexpandparts = 0, numext4expandparts = 0, reserveblocks = 0;
+    int win10Fat = 0, win10Ntfs = 0;
     bool RiscOSworkaround = false;
-    bool WinIoTworkaround = false;
-    int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
-    int availableMB = (getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong()-startSector)/2048;
+    int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong() + SETTINGS_PARTITION_SIZE + EBR_PARTITION_OFFSET;
+    int availableMB = (sizeofSDCardInBlocks() - startSector)/2048;
 
+/*
+unneeded?
+    if (!saveSettingsFiles())
+    {
+        emit error(tr("Error saving settings files to memory. SD card may be damaged."));
+        return;
+    }
+*/
     foreach (QString folder, _images.keys())
     {
         QVariantList partitions = Json::loadFromFile(folder+"/partitions.json").toMap().value("partitions").toList();
@@ -63,7 +71,25 @@ void MultiImageWriteThread::run()
                     numext4expandparts++;
                 }
             }
+
+            if (nameMatchesWinIoT(folder))
+            {
+                /* Windows IoT partitions cannot be an extended partition.
+                   Reserve space after the extended partition */
+                reserveblocks += partition.value("partition_size_nominal").toInt() * 2048;
+                if (partition.value("filesystem_type").toString() == "NTFS" ||
+                    partition.value("filesystem_type").toString() == "ntfs")
+                {
+                    win10Ntfs = partition.value("partition_size_nominal").toInt() * 2048;
+                }
+                if (partition.value("filesystem_type").toString() == "FAT" ||
+                    partition.value("filesystem_type").toString() == "fat")
+                {
+                    win10Fat = partition.value("partition_size_nominal").toInt() * 2048;
+                }
+            }
         }
+
         if (nameMatchesRiscOS(folder))
         {
             /* Check the riscos_offset in os.json matches what we're expecting.
@@ -84,7 +110,7 @@ void MultiImageWriteThread::run()
                 emit error(tr("RISCOS cannot be installed. RISCOS offset value missing."));
                 return;
             }
-            if (startSector > RISCOS_SECTOR_OFFSET-2048)
+            if (startSector > RISCOS_SECTOR_OFFSET - EBR_PARTITION_OFFSET)
             {
                 emit error(tr("RISCOS cannot be installed. Size of recovery partition too large."));
                 return;
@@ -98,17 +124,6 @@ void MultiImageWriteThread::run()
 QMessageBox::StandardButton answer;
 emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
 */
-
-        if (nameMatchesWinIoT(folder))
-        {
-            /* Windows IoT MainOS Partition cannot be an extended partition.
-               The extended partition must be reduced and the MainOS added
-               to partition 4
-            */
-            WinIoTworkaround = true;
-// HACK - this needs to be read from json file
-            part4Size = 4400 * 1024 * 2;
-        }
     }
 
     /* 4 MB overhead per partition (logical partition table) */
@@ -130,20 +145,27 @@ emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
         return;
     }
 
-    if (WinIoTworkaround)
+    emit statusUpdate(tr("Clearing existing EBR"));
+    clearEBR();
+
+    emit statusUpdate(tr("Removing partions 3 and 4"));
+
+    if (!sfdisk(4, 0, 0, "0") ||
+        !sfdisk(3, 0, 0, "0"))
+        return;
+
+    if (reserveblocks > 0)
     {
         emit statusUpdate(tr("Reallocating space for Windows IoT"));
 
-        if (!relocateExtToPart4(part4Size))
+        if (!reduceExtendedPartition(reserveblocks))
+            return;
+
+        /* Reserve the rest of the SD card for Win 10. */
+        if (!sfdisk(3, sizeofSDCardInBlocks() - reserveblocks, win10Fat, "c") ||
+            !sfdisk(4, sizeofSDCardInBlocks() - reserveblocks + win10Fat, win10Ntfs, "7"))
             return;
     }
-    else
-    {
-        // HACK - Windows can't have nice things
-        emit statusUpdate(tr("Clearing existing EBR"));
-        clearEBR();
-    }
-
 
     /* Install RiscOS first */
     if (RiscOSworkaround)
@@ -162,6 +184,9 @@ emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
     }
 
     /* Process each image */
+    /* At this point no more calls to sfdisk can be done due to it complaining
+       about invalid extended partitions created by addPartitionImage */
+
     for (QMultiMap<QString,QString>::const_iterator iter = _images.constBegin(); iter != _images.constEnd(); iter++)
     {
         if (!processImage(iter.key(), iter.value()))
@@ -179,8 +204,15 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
 
     qDebug() << "Processing OS:" << os_name;
 
-    QVariantList vpartitions;
+    int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
+
+    if (nameMatchesWinIoT(folder))
+    {
+        startSector = getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong();
+    }
+
     QVariantList partitions = Json::loadFromFile(folder+"/partitions.json").toMap().value("partitions").toList();
+    QVariantList vpartitions;
     foreach (QVariant pv, partitions)
     {
         QVariantMap partition = pv.toMap();
@@ -248,26 +280,37 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
         if (nameMatchesRiscOS(folder) && (fstype == "FAT" || fstype == "fat"))
         {
             /* Let Risc OS start at known offset */
-            int startSector   = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
-            specialOffset = RISCOS_SECTOR_OFFSET - startSector - 2048;
+            specialOffset = RISCOS_SECTOR_OFFSET - startSector - EBR_PARTITION_OFFSET;
         }
 
-
-        if (nameMatchesWinIoT(folder) && (fstype == "NTFS" || fstype == "ntfs"))
+        emit statusUpdate(tr("%1: Creating partition entry").arg(os_name));
+        if (nameMatchesWinIoT(folder) && (fstype == "FAT" || fstype == "fat"))
         {
-            /* Windows IoT uses primary partition 4, not extended partitions*/
+            /* Windows IoT uses primary partition 3, not extended partitions */
+            partdevice = "/dev/mmcblk0p3";
+            _part--;
+// can't call sfdisk here because it complains about extended partitions created
+// by addPartitionEntry
+//             if (!sfdisk(3, startSector, partsizeSectors, QByteArray::number(parttype, 16)))
+//                return false;
+
+            startSector += partsizeSectors;
+        }
+        else if (nameMatchesWinIoT(folder) && (fstype == "NTFS" || fstype == "ntfs"))
+        {
+            /* Windows IoT uses primary partition 4, not extended partitions */
             partdevice = "/dev/mmcblk0p4";
             _part--;
-        }
-        else if (nameMatchesWinIoT(folder) && (fstype == "FAT" || fstype == "fat"))
-        {
-            /* Windows IoT uses primary partition 2, not extended partitions*/
-            partdevice = "/dev/mmcblk0p2";
-            _part--;
+
+// can't call sfdisk here because it complains about extended partitions created
+// by addPartitionEntry
+//            if (!sfdisk(4, startSector, partsizeSectors, QByteArray::number(parttype, 16)))
+//                return false;
+
+            startSector += partsizeSectors;
         }
         else
         {
-            emit statusUpdate(tr("%1: Creating partition entry").arg(os_name));
             if (!addPartitionEntry(partsizeSectors, parttype, specialOffset))
                 return false;
         }
@@ -420,7 +463,7 @@ tr("HeyThere"), &answer);
         quint32 oldSig = 0xAE420040;
         quint64 oldEFI = 0x00200000;
         quint64 oldMainOS = 0x04800000;
-        quint64 newEFI = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong() * 512;
+        quint64 newEFI = getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong() * 512;
         quint64 newMainOS = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong() * 512;
         
         emit statusUpdate(tr("Rewriting Windows BCD file"));
@@ -461,26 +504,32 @@ tr("HeyThere"), &answer);
     return true;
 }
 
-bool MultiImageWriteThread::relocateExtToPart4(int size)
+bool MultiImageWriteThread::reduceExtendedPartition(int size)
 {
-    /* Unmount everything before modifying partition table */
-    QProcess::execute("umount -r /mnt");
-    QProcess::execute("umount -r /settings");
-
     int startOfExtended = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
-    int startOfSettings = getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong();
-    int sizeOfExtended = startOfSettings - startOfExtended;
+    int sizeOfExtended = sizeofSDCardInBlocks() - startOfExtended;
 
-    if (size > sizeOfExtended)
+    if (size + SETTINGS_PARTITION_SIZE + EBR_PARTITION_OFFSET> sizeOfExtended)
     {
         emit error(tr("Error reallocating extended partition - partition too large"));
         return false;
     }
 
     /* Let sfdisk update the extended partition */
-    QString cmd = QString("/sbin/sfdisk -uS /dev/mmcblk0 -N2");
-    QByteArray partition;
-    partition = QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended - size)+",X\n";                                       
+    if (!sfdisk(2, startOfExtended, sizeOfExtended - size, "X"))
+        return false;
+
+    return true;
+}
+
+bool MultiImageWriteThread::sfdisk(int part, int start, int size, const QByteArray &type)
+{
+    /* Unmount everything before modifying partition table */
+    QProcess::execute("umount -r /mnt");
+    QProcess::execute("umount -r /settings");
+
+    QString cmd = QString("/sbin/sfdisk -uS /dev/mmcblk0 -N") + QString::number(part);
+    QByteArray partition = QByteArray::number(start)+","+QByteArray::number(size)+","+type+"\n";                                       
     
     QProcess proc;
     proc.setProcessChannelMode(proc.MergedChannels);
@@ -490,76 +539,51 @@ bool MultiImageWriteThread::relocateExtToPart4(int size)
     proc.waitForFinished(-1);
     if (proc.exitCode() != 0)
     {
-        emit error(tr("Error resizing extended partition")+"\n"+proc.readAll());
+        emit error(tr("Error creating partition %1").arg(QString::number(part))+"\n"+proc.readAll());
         return false;
     }
     qDebug() << "sfdisk done, output:" << proc.readAll();
     QThread::msleep(2000);
-
-    /* Let sfdisk add partition 4 NTFS */
-    cmd = QString("/sbin/sfdisk -uS /dev/mmcblk0 -N4");
-    partition = QByteArray::number(startOfSettings - size)+","+QByteArray::number(size)+",7\n";                                       
     
-    QProcess proc2;
-    proc2.setProcessChannelMode(proc.MergedChannels);
-    proc2.start(cmd);
-    proc2.write(partition);
-    proc2.closeWriteChannel();
-    proc2.waitForFinished(-1);
-    if (proc2.exitCode() != 0)
-    {
-        emit error(tr("Error creating partition 4")+"\n"+proc2.readAll());
-        return false;
-    }
-    qDebug() << "sfdisk done, output:" << proc.readAll();
-    QThread::msleep(2000);
-
-//
-// Hack - rewrite partition 2 to EFIESP partition until we get VHD's working
-//
-    
-    /* Let sfdisk add partition 2 FAT32 */
-    cmd = QString("/sbin/sfdisk -uS /dev/mmcblk0 -N2");
-    partition = QByteArray::number(startOfExtended)+","+QByteArray::number(131072)+",c\n";
-    
-    QProcess proc3;
-    proc3.setProcessChannelMode(proc.MergedChannels);
-    proc3.start(cmd);
-    proc3.write(partition);
-    proc3.closeWriteChannel();
-    proc3.waitForFinished(-1);
-    if (proc3.exitCode() != 0)
-    {
-        emit error(tr("Error creating partition 2")+"\n"+proc3.readAll());
-        return false;
-    }
-    qDebug() << "sfdisk done, output:" << proc.readAll();
-    QThread::msleep(2000);
-
     QProcess::execute("/usr/sbin/partprobe");
     QThread::msleep(1500);
 
     /* Remount */
     QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
-    QProcess::execute("mount -t ext4 /dev/mmcblk0p3 /settings");
+    QProcess::execute("mount -o ro -t ext4 " SETTINGS_PARTITION " /settings");
 
     return true;
 }
 
 void MultiImageWriteThread::clearEBR()
 {
+    /* Unmount everything before modifying partition table */
+    QProcess::execute("umount -r /mnt");
+    QProcess::execute("umount -r /settings");
+
     mbr_table ebr;
     int startOfExtended = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
 
-    /* Write out empty extended partition table with signature */
+    /* Write out extended partition table with single settings partition */
     memset(&ebr, 0, sizeof ebr);
+    ebr.part[0].starting_sector = EBR_PARTITION_OFFSET;
+    ebr.part[0].nr_of_sectors = SETTINGS_PARTITION_SIZE;
+    ebr.part[0].id = 0x83;
     ebr.signature[0] = 0x55;
     ebr.signature[1] = 0xAA;
     QFile f("/dev/mmcblk0");
     f.open(f.ReadWrite);
     f.seek(qint64(startOfExtended)*512);
     f.write((char *) &ebr, sizeof(ebr));
+    // Tell Linux to re-read the partition table
+    f.flush();
+    ioctl(f.handle(), BLKRRPART);
     f.close();
+    QThread::msleep(500);
+
+    /* Remount */
+    QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
+    QProcess::execute("mount -t ext4 " SETTINGS_PARTITION " /settings");
 }
 
 quint32 MultiImageWriteThread::getDiskSignature()
@@ -577,8 +601,8 @@ quint32 MultiImageWriteThread::getDiskSignature()
 bool MultiImageWriteThread::addPartitionEntry(int sizeInSectors, int type, int specialOffset)
 {
     /* Unmount everything before modifying partition table */
-    //QProcess::execute("umount -r /mnt");
-    //QProcess::execute("umount -r /settings");
+    QProcess::execute("umount -r /mnt");
+    QProcess::execute("umount -r /settings");
 
     unsigned int startOfExtended = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
     unsigned int offsetInSectors = 0;
@@ -613,9 +637,19 @@ bool MultiImageWriteThread::addPartitionEntry(int sizeInSectors, int type, int s
     if (ebr.part[0].starting_sector)
     {
         /* Add reference to new EBR to old last EBR */
-        ebr.part[1].starting_sector = offsetInSectors+ebr.part[0].starting_sector+ebr.part[0].nr_of_sectors;
-        ebr.part[1].nr_of_sectors = sizeInSectors + specialOffset + 2048;
+        ebr.part[1].starting_sector = offsetInSectors + ebr.part[0].starting_sector + ebr.part[0].nr_of_sectors;
+        ebr.part[1].nr_of_sectors = sizeInSectors + EBR_PARTITION_OFFSET;
         ebr.part[1].id = 0x0F;
+
+        if (specialOffset)
+        {
+            if (ebr.part[1].starting_sector > specialOffset)
+            {
+                emit error(tr("Internal error in RiscOS partitioning"));
+                return false;
+            }
+            ebr.part[1].starting_sector = specialOffset;
+        }
 
         f.seek(qint64(startOfExtended+offsetInSectors)*512);
         f.write((char *) &ebr, sizeof(ebr));
@@ -628,9 +662,13 @@ bool MultiImageWriteThread::addPartitionEntry(int sizeInSectors, int type, int s
     ebr.signature[1] = 0xAA;
 
     if (specialOffset)
-        ebr.part[0].starting_sector = 2048 + specialOffset;
+    {
+        ebr.part[0].starting_sector = EBR_PARTITION_OFFSET + specialOffset - offsetInSectors;
+    }
     else
-        ebr.part[0].starting_sector = ((((startOfExtended+offsetInSectors+specialOffset+2048)+6144)/8192)*8192) - (startOfExtended+offsetInSectors);
+    {
+        ebr.part[0].starting_sector = ((((startOfExtended + offsetInSectors + EBR_PARTITION_OFFSET) + 6144) / 8192) * 8192) - (startOfExtended + offsetInSectors);
+    }
 
     ebr.part[0].nr_of_sectors = sizeInSectors;
     ebr.part[0].id = type;
@@ -646,8 +684,8 @@ bool MultiImageWriteThread::addPartitionEntry(int sizeInSectors, int type, int s
     QThread::msleep(500);
 
     /* Remount */
-    //QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
-    //QProcess::execute("mount -t ext4 /dev/mmcblk0p3 /settings");
+    QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
+    QProcess::execute("mount -t ext4 " SETTINGS_PARTITION " /settings");
 
     return true;
 }
@@ -970,3 +1008,4 @@ QString MultiImageWriteThread::getDescription(const QString &folder, const QStri
 
     return "";
 }
+

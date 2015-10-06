@@ -159,3 +159,14 @@ bool setRebootPartition(QByteArray partition)
     }
     return false;
 }
+
+int sizeofSDCardInBlocks()
+{
+    QFile f("/sys/class/block/mmcblk0/size");
+    f.open(f.ReadOnly);
+    int blocks = f.readAll().trimmed().toULongLong();
+    f.close();
+
+    return blocks;
+}
+

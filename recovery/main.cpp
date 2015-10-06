@@ -40,8 +40,9 @@ void reboot_to_extended(const QString &defaultPartition, bool setDisplayMode)
     QProcess::execute("umount -r /mnt");
     QProcess::execute("umount -r /settings");
 
-    if (QFile::exists("/dev/mmcblk0p7") ||
-        (QFile::exists("/dev/mmcblk0p4") && QFile::exists("/dev/mmcblk0p5")))
+    // Check if more than one OS is installed, if so show boot selection dialog
+    if (QFile::exists("/dev/mmcblk0p8") ||
+        (QFile::exists("/dev/mmcblk0p4") && QFile::exists(FAT_PARTITION_OF_IMAGE)))
     {
 #ifdef Q_WS_QWS
         QWSServer::setBackground(Qt::white);
@@ -149,25 +150,26 @@ int main(int argc, char *argv[])
         QApplication::processEvents();
 
     // If -runinstaller is not specified, only continue if SHIFT is pressed, GPIO is triggered,
-    // or no OS is installed (/dev/mmcblk0p5 does not exist)
-    bool part5 = QFile::exists(FAT_PARTITION_OF_IMAGE);
-    bool part4 = QFile::exists("/dev/mmcblk0p4");
+    // or no OS is installed (/dev/mmcblk0p6 does not exist)
+    bool part6 = QFile::exists(FAT_PARTITION_OF_IMAGE);
+    bool part3and4 = QFile::exists("/dev/mmcblk0p3") &&
+                     QFile::exists("/dev/mmcblk0p4");
 
     bool bailout = !runinstaller
         && !force_trigger
         && !(gpio_trigger && (gpio.value() == 0 ))
         && !(keyboard_trigger && KeyDetection::isF10pressed())
-        && (part5 || part4);
+        && (part6 || part3and4);
 
-    // Default to booting first extended partition
+    // Default to booting first extended partition after settings partition
     // or windows partition
-    if (QFile::exists("/dev/mmcblk0p4"))
+    if (part3and4)
     {
-        setRebootPartition("2");
+        setRebootPartition("3");
     }
     else
     {
-        setRebootPartition("5");
+        setRebootPartition("6");
     }
 
     if (bailout)
