@@ -1,0 +1,10 @@
+config BR2_PACKAGE_P7ZIP
+	bool "p7zip"
+	help
+	  p7zip is a quick port of 7.exe nad 7xza.exe
+	   (command line version of 7-zip, see http://www.7-zip.org) for Unix.
+
+	  7-Zip is a file archiver with highest compression ratio.
+
+	  http://sourceforge.net/projects/p7zip
+
