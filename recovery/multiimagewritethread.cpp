@@ -373,7 +373,6 @@ tr("HeyThere"), &answer);
                     return false;
             }
         }
-        QThread::msleep(5000);
 
         vpartitions.append(partdevice);
         _part++;
@@ -469,25 +468,6 @@ tr("HeyThere"), &answer);
         }
     }
 
-/*
-    if (nameMatchesWinIoT(folder))
-    {
-        quint32 diskSig = getDiskSignature();
-        quint32 oldSig = 0xAE420040;
-        quint64 oldEFI = 0x00200000;
-        quint64 oldMainOS = 0x04800000;
-        quint64 newEFI = getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong() * 512;
-        quint64 newMainOS = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong() * 512;
-        
-        emit statusUpdate(tr("Rewriting Windows BCD file"));
-        if (!updateWindowsBCD(oldSig, diskSig, oldEFI, newEFI, oldMainOS, newMainOS))
-        {
-            return false;
-        }
-        QThread::msleep(5000);
-    }
-*/
-
     emit statusUpdate(tr("%1: Unmounting FAT partition").arg(os_name));
     if (QProcess::execute("umount /mnt2") != 0)
     {
@@ -557,10 +537,9 @@ bool MultiImageWriteThread::sfdisk(int part, int start, int size, const QByteArr
         return false;
     }
     qDebug() << "sfdisk done, output:" << proc.readAll();
-    QThread::msleep(2000);
     
     QProcess::execute("/usr/sbin/partprobe");
-    QThread::msleep(1500);
+    QThread::msleep(500);
 
     /* Remount */
     QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
@@ -598,18 +577,6 @@ void MultiImageWriteThread::clearEBR()
     /* Remount */
     QProcess::execute("mount -o ro -t vfat /dev/mmcblk0p1 /mnt");
     QProcess::execute("mount -t ext4 " SETTINGS_PARTITION " /settings");
-}
-
-quint32 MultiImageWriteThread::getDiskSignature()
-{
-    quint32 signature;
-
-    QFile f("/dev/mmcblk0");
-    f.open(f.ReadOnly);
-    f.seek(qint64(0x1b8));
-    f.read((char *)&signature, sizeof(signature));
-    f.close();
-    return signature;
 }
 
 bool MultiImageWriteThread::addPartitionEntry(int sizeInSectors, int type, int specialOffset)
@@ -742,73 +709,6 @@ bool MultiImageWriteThread::mkfs(const QByteArray &device, const QByteArray &fst
         emit error(tr("Error creating file system")+"\n"+p.readAll());
         return false;
     }
-
-    return true;
-}
-
-QByteArray MultiImageWriteThread::generateBCDSignature(
-    quint32 diskSignature, quint64 partitionOffset)
-{
-    QByteArray signature(28, '\0');
-    signature[20] = 0x01;
-    signature.replace(24, sizeof(diskSignature), (const char *)&diskSignature, sizeof(diskSignature));
-    signature.replace(0, sizeof(partitionOffset), (const char *)&partitionOffset, sizeof(partitionOffset));
-
-    return signature;
-}
-   
-bool MultiImageWriteThread::updateWindowsBCD(
-    quint32 oldDiskSignature, quint32 newDiskSignature,
-    quint64 oldEFIOffset, quint64 newEFIOffset,
-    quint64 oldMainOsOffset, quint64 newMainOsOffset)
-{
-    QFile f("/mnt2/EFI/Microsoft/boot/bcd");
-    
-    if (!f.open(f.ReadWrite))
-    {
-        emit error(tr("Error opening /mnt2/EFI/Microsoft/boot/bcd for writing"));
-        return false;
-    }
-
-    QByteArray bcd = f.readAll();
-    QByteArray oldEfiSig, newEfiSig, oldMainOsSig, newMainOsSig;
-
-    oldEfiSig = generateBCDSignature(oldDiskSignature, oldEFIOffset);
-    newEfiSig = generateBCDSignature(newDiskSignature, newEFIOffset);
-   
-    oldMainOsSig = generateBCDSignature(oldDiskSignature, oldMainOsOffset);
-    newMainOsSig = generateBCDSignature(newDiskSignature, newMainOsOffset);
-   
-// hack
-
-    QFile sig1("/mnt2/oldEFI");
-    sig1.open(f.WriteOnly);
-    sig1.write(oldEfiSig);
-    sig1.close();
-    
-    QFile sig2("/mnt2/oldMainOs");
-    sig2.open(f.WriteOnly);
-    sig2.write(oldMainOsSig);
-    sig2.close();
-    
-    QFile sig3("/mnt2/oldBCD");
-    sig3.open(f.WriteOnly);
-    sig3.write(bcd);
-    sig3.close();
-    
-    if (bcd.count(oldEfiSig) < 1 || bcd.count(oldMainOsSig) < 1)
-    {
-        f.close();
-        emit error(tr("Cannot find partition information in Windows BCD file"));
-        return false;
-    }
-    
-    bcd.replace(oldEfiSig, newEfiSig);
-    bcd.replace(oldMainOsSig, newMainOsSig);
-    
-    f.reset();
-    f.write(bcd);
-    f.close();
 
     return true;
 }

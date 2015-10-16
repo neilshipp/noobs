@@ -23,7 +23,6 @@ protected:
     bool updateWindowsBCD( quint32 oldDiskSignature, quint32 newDiskSignature,
         quint64 oldEFIOffset, quint64 oldMainOsOffset,
         quint64 newEFIOffset, quint64 newMainOsOffset);
-    quint32 getDiskSignature();
     bool addPartitionEntry(int sizeInSectors, int type, int specialOffset = 0);
     bool sfdisk(int part, int start, int size, const QByteArray &type);
     bool mkfs(const QByteArray &device, const QByteArray &fstype = "ext4", const QByteArray &label = "", const QByteArray &mkfsopt = "");
