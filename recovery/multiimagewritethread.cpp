@@ -32,7 +32,7 @@ void MultiImageWriteThread::addImage(const QString &folder, const QString &flavo
 void MultiImageWriteThread::run()
 {
     /* Calculate space requirements */
-    int totalnominalsize = 0, totaluncompressedsize = 0, numparts = 0, numexpandparts = 0, numext4expandparts = 0, reserveblocks = 0;
+    int totalnominalsize = 0, totaluncompressedsize = 0, numparts = 0, numexpandparts = 0, numext4expandparts = 0;
     int win10Fat = 0, win10Ntfs = 0;
     bool RiscOSworkaround = false;
     int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong() + SETTINGS_PARTITION_SIZE + EBR_PARTITION_OFFSET;
@@ -76,16 +76,28 @@ unneeded?
             {
                 /* Windows IoT partitions cannot be an extended partition.
                    Reserve space after the extended partition */
-                reserveblocks += partition.value("partition_size_nominal").toInt() * 2048;
+                int partitionSize = partition.value("partition_size_nominal").toInt() * 2048;
                 if (partition.value("filesystem_type").toString() == "NTFS" ||
                     partition.value("filesystem_type").toString() == "ntfs")
                 {
-                    win10Ntfs = partition.value("partition_size_nominal").toInt() * 2048;
+                    if (win10Ntfs != 0)
+                    {
+                        emit error(tr("WinIoT cannot have more than 1 NTFS partition."));
+                        return;
+                    }
+
+                    win10Ntfs = partitionSize;
                 }
                 if (partition.value("filesystem_type").toString() == "FAT" ||
                     partition.value("filesystem_type").toString() == "fat")
                 {
-                    win10Fat = partition.value("partition_size_nominal").toInt() * 2048;
+                    if (win10Fat != 0)
+                    {
+                        emit error(tr("WinIoT cannot have more than 1 FAT partition."));
+                        return;
+                    }
+
+                    win10Fat = partitionSize;
                 }
             }
         }
@@ -154,16 +166,16 @@ emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
         !sfdisk(3, 0, 0, "0"))
         return;
 
-    if (reserveblocks > 0)
+    if (win10Fat || win10Ntfs)
     {
         emit statusUpdate(tr("Reallocating space for Windows IoT"));
 
-        if (!reduceExtendedPartition(reserveblocks))
+        if (!reduceExtendedPartition(win10Fat + win10Ntfs))
             return;
 
-        /* Reserve the rest of the SD card for Win 10. */
-        if (!sfdisk(3, sizeofSDCardInBlocks() - reserveblocks, win10Fat, "c") ||
-            !sfdisk(4, sizeofSDCardInBlocks() - reserveblocks + win10Fat, win10Ntfs, "7"))
+        /* Reserve the end of the SD card for Win 10 */
+        if (!sfdisk(3, sizeofSDCardInBlocks() - win10Fat - win10Ntfs, win10Fat, "c") ||
+            !sfdisk(4, sizeofSDCardInBlocks() - win10Ntfs, win10Ntfs, "7"))
             return;
     }
 
@@ -324,7 +336,7 @@ QMessageBox::StandardButton answer;
 emit query(tr("unpacking '%1' to '%2' folder '%3' fstype '%4'").arg(tarball, QString(partdevice), folder, QString(fstype)),
 tr("HeyThere"), &answer);
 */
-            if (!dd(tarball, partdevice))
+            if (!emptyfs && !dd(tarball, partdevice))
                 return false;
         }
         else
@@ -457,6 +469,7 @@ tr("HeyThere"), &answer);
         }
     }
 
+/*
     if (nameMatchesWinIoT(folder))
     {
         quint32 diskSig = getDiskSignature();
@@ -473,6 +486,7 @@ tr("HeyThere"), &answer);
         }
         QThread::msleep(5000);
     }
+*/
 
     emit statusUpdate(tr("%1: Unmounting FAT partition").arg(os_name));
     if (QProcess::execute("umount /mnt2") != 0)
