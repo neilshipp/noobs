@@ -6,7 +6,6 @@
 #include <QDir>
 #include <QFile>
 #include <QDebug>
-#include <QMessageBox>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSettings>
@@ -38,14 +37,6 @@ void MultiImageWriteThread::run()
     int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong() + SETTINGS_PARTITION_SIZE + EBR_PARTITION_OFFSET;
     int availableMB = (sizeofSDCardInBlocks() - startSector)/2048;
 
-/*
-unneeded?
-    if (!saveSettingsFiles())
-    {
-        emit error(tr("Error saving settings files to memory. SD card may be damaged."));
-        return;
-    }
-*/
     foreach (QString folder, _images.keys())
     {
         QVariantList partitions = Json::loadFromFile(folder+"/partitions.json").toMap().value("partitions").toList();
@@ -131,11 +122,6 @@ unneeded?
             totalnominalsize += (RISCOS_SECTOR_OFFSET - startSector)/2048;
             RiscOSworkaround = true;
         }
-
-/*
-QMessageBox::StandardButton answer;
-emit query(tr("Folder name: '%1'").arg(folder),tr("HeyThere"), &answer);
-*/
     }
 
     /* 4 MB overhead per partition (logical partition table) */
@@ -331,11 +317,6 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
         {
             emit statusUpdate(tr("%1: Writing OS image %2").arg(os_name, tarball));
 
-/*
-QMessageBox::StandardButton answer;
-emit query(tr("unpacking '%1' to '%2' folder '%3' fstype '%4'").arg(tarball, QString(partdevice), folder, QString(fstype)),
-tr("HeyThere"), &answer);
-*/
             if (!emptyfs && !dd(tarball, partdevice))
                 return false;
         }
