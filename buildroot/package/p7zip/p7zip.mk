@@ -56,6 +56,6 @@ define P7ZIP_INSTALL_TARGET_CMDS
 endef
 
 $(eval $(generic-package))
-$(eval $(host-generic-package))
+# $(eval $(host-generic-package))
 
 

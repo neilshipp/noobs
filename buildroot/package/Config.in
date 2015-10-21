@@ -3,6 +3,8 @@ menu "Target packages"
 	source "package/busybox/Config.in"
 	source "package/arora/Config.in"
 	source "package/recovery/Config.in"
+	source "package/winiot/Config.in"
+	source "package/installtool/Config.in"
 
 menu "Audio and video applications"
 	source "package/alsa-utils/Config.in"
