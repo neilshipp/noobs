@@ -279,14 +279,18 @@ bool InitDriveThread::method_resizePartitions()
     int startOfExtended = startOfOurPartition + sizeOfOurPartition;
     // Align on 4 MiB boundary
     startOfExtended += 8192-(startOfExtended % 8192);
-    
+
+// BUGBUG - reserve space for WinIOT
+    startOfExtended += 5000 * 2048;    
+//
+
     int sizeOfDisk = sizeofSDCardInBlocks();
     int sizeOfExtended = sizeOfDisk - startOfExtended;
 
     partitionTable  = QByteArray::number(startOfOurPartition)+","+QByteArray::number(sizeOfOurPartition)+",0E\n"; /* FAT partition */
+    partitionTable += "0,0\n";
+    partitionTable += "0,0\n";
     partitionTable += QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended)+",X\n"; /* Extended partition with all remaining space */
-    partitionTable += "0,0\n";
-    partitionTable += "0,0\n";
     qDebug() << "Writing partition table" << partitionTable;
 
     /* Write out extended partition table with settings logical partition */
@@ -298,8 +302,9 @@ bool InitDriveThread::method_resizePartitions()
     extended_mbr.signature[0] = 0x55;
     extended_mbr.signature[1] = 0xAA;
     f.open(f.ReadWrite);
-    f.seek(startOfExtended*512);
+    f.seek(((qint64)startOfExtended)*512L);
     f.write((char *) &extended_mbr, sizeof(extended_mbr));
+    f.flush();
     f.close();
 
     /* Let sfdisk write a proper partition table */
@@ -403,14 +408,14 @@ bool InitDriveThread::partitionDrive()
     int rescueBlocks = RESCUE_PARTITION_SIZE*1024*2;
 
     mbr_table extended_mbr;
-    int startOfExtended = 2048+rescueBlocks;
+    int startOfExtended = 2048+rescueBlocks + 5000 * 2048;  // reserve space for WinIoT
     int sizeOfDisk = sizeofSDCardInBlocks();
     int sizeOfExtended = sizeOfDisk - startOfExtended;
 
     partitionTable = "2048,"+QByteArray::number(rescueBlocks)+",0E\n"; /* FAT partition */
+    partitionTable += "0,0\n";
+    partitionTable += "0,0\n";
     partitionTable += QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended)+",X\n"; /* Extended partition with all remaining space */
-    partitionTable += "0,0\n";
-    partitionTable += "0,0\n";
 
     /* Write out empty extended partition table with signature */
     memset(&extended_mbr, 0, sizeof extended_mbr);
@@ -418,7 +423,7 @@ bool InitDriveThread::partitionDrive()
     extended_mbr.signature[1] = 0xAA;
     QFile f("/dev/mmcblk0");
     f.open(f.ReadWrite);
-    f.seek(startOfExtended*512);
+    f.seek(((qint64)startOfExtended)*512L);
     f.write((char *) &extended_mbr, sizeof(extended_mbr));
     f.close();
 

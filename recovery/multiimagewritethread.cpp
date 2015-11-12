@@ -34,7 +34,7 @@ void MultiImageWriteThread::run()
     int totalnominalsize = 0, totaluncompressedsize = 0, numparts = 0, numexpandparts = 0, numext4expandparts = 0;
     int win10Fat = 0, win10Ntfs = 0;
     bool RiscOSworkaround = false;
-    int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong() + SETTINGS_PARTITION_SIZE + EBR_PARTITION_OFFSET;
+    int startSector = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong() + SETTINGS_PARTITION_SIZE + EBR_PARTITION_OFFSET;
     int availableMB = (sizeofSDCardInBlocks() - startSector)/2048;
 
     foreach (QString folder, _images.keys())
@@ -146,22 +146,35 @@ void MultiImageWriteThread::run()
     emit statusUpdate(tr("Clearing existing EBR"));
     clearEBR();
 
-    emit statusUpdate(tr("Removing partions 3 and 4"));
+    emit statusUpdate(tr("Removing partions 2 and 3"));
 
-    if (!sfdisk(4, 0, 0, "0") ||
-        !sfdisk(3, 0, 0, "0"))
+    if (!sfdisk(3, 0, 0, "0") ||
+        !sfdisk(2, 0, 0, "0"))
         return;
 
     if (win10Fat || win10Ntfs)
     {
         emit statusUpdate(tr("Reallocating space for Windows IoT"));
 
-        if (!reduceExtendedPartition(win10Fat + win10Ntfs))
-            return;
+//        if (!reduceExtendedPartition(win10Fat + win10Ntfs))
+//            return;
 
-        /* Reserve the end of the SD card for Win 10 */
-        if (!sfdisk(3, sizeofSDCardInBlocks() - win10Fat - win10Ntfs, win10Fat, "c") ||
-            !sfdisk(4, sizeofSDCardInBlocks() - win10Ntfs, win10Ntfs, "7"))
+// BUGBUG
+        int startOfRecoveryPartition = getFileContents("/sys/class/block/mmcblk0p1/start").trimmed().toInt();
+        int sizeOfRecoveryPartition = getFileContents("/sys/class/block/mmcblk0p1/size").trimmed().toInt();
+        startSector = startOfRecoveryPartition + sizeOfRecoveryPartition;
+        // Align on 4 MiB boundary
+        startSector += 8192-(startSector % 8192);
+// BUGBUG
+
+        /* Reserve the space between recovery partition and extended partition */
+/*
+        if (!sfdisk(3, startSector - win10Fat - win10Ntfs, win10Fat, "c") ||
+            !sfdisk(4, startSector - win10Ntfs, win10Ntfs, "7"))
+            return;
+*/
+        if (!sfdisk(2, startSector, win10Fat, "c") ||
+            !sfdisk(3, startSector + win10Fat, win10Ntfs, "7"))
             return;
     }
 
@@ -202,11 +215,11 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
 
     qDebug() << "Processing OS:" << os_name;
 
-    int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
+    int startSector = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong();
 
     if (nameMatchesWinIoT(folder))
     {
-        startSector = getFileContents("/sys/class/block/mmcblk0p3/start").trimmed().toULongLong();
+        startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
     }
 
     QVariantList partitions = Json::loadFromFile(folder+"/partitions.json").toMap().value("partitions").toList();
@@ -284,8 +297,8 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
         emit statusUpdate(tr("%1: Creating partition entry").arg(os_name));
         if (nameMatchesWinIoT(folder) && (fstype == "FAT" || fstype == "fat"))
         {
-            /* Windows IoT uses primary partition 3, not extended partitions */
-            partdevice = "/dev/mmcblk0p3";
+            /* Windows IoT uses primary partition 2, not extended partitions */
+            partdevice = "/dev/mmcblk0p2";
             _part--;
 // can't call sfdisk here because it complains about extended partitions created
 // by addPartitionEntry
@@ -296,8 +309,8 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
         }
         else if (nameMatchesWinIoT(folder) && (fstype == "NTFS" || fstype == "ntfs"))
         {
-            /* Windows IoT uses primary partition 4, not extended partitions */
-            partdevice = "/dev/mmcblk0p4";
+            /* Windows IoT uses primary partition 3, not extended partitions */
+            partdevice = "/dev/mmcblk0p3";
             _part--;
 
 // can't call sfdisk here because it complains about extended partitions created
@@ -481,7 +494,7 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
 
 bool MultiImageWriteThread::reduceExtendedPartition(int size)
 {
-    int startOfExtended = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
+    int startOfExtended = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong();
     int sizeOfExtended = sizeofSDCardInBlocks() - startOfExtended;
 
     if (size + SETTINGS_PARTITION_SIZE + EBR_PARTITION_OFFSET> sizeOfExtended)
@@ -536,7 +549,7 @@ void MultiImageWriteThread::clearEBR()
     QProcess::execute("umount -r /settings");
 
     mbr_table ebr;
-    int startOfExtended = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
+    int startOfExtended = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong();
 
     /* Write out extended partition table with single settings partition */
     memset(&ebr, 0, sizeof ebr);
@@ -566,7 +579,7 @@ bool MultiImageWriteThread::addPartitionEntry(int sizeInSectors, int type, int s
     QProcess::execute("umount -r /mnt");
     QProcess::execute("umount -r /settings");
 
-    unsigned int startOfExtended = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
+    unsigned int startOfExtended = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong();
     unsigned int offsetInSectors = 0;
     mbr_table ebr;
     QFile f("/dev/mmcblk0");

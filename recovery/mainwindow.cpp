@@ -192,7 +192,7 @@ void MainWindow::populate()
 
     // Fill in list of images
     repopulate();
-    _availableMB = (sizeofSDCardInBlocks() - SETTINGS_PARTITION_SIZE - EBR_PARTITION_OFFSET - getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong())/2048;
+    _availableMB = (sizeofSDCardInBlocks() - SETTINGS_PARTITION_SIZE - EBR_PARTITION_OFFSET - getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong())/2048;
     updateNeeded();
 
     if (ui->list->count() != 0)
@@ -1233,7 +1233,7 @@ void MainWindow::updateNeeded()
         if (nameMatchesRiscOS(entry.value("name").toString()))
         {
             /* RiscOS needs to start at a predetermined sector, calculate the extra space needed for that */
-            int startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
+            int startSector = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong();
             _neededMB += (RISCOS_SECTOR_OFFSET - startSector)/2048;
         }
     }

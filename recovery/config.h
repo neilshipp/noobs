@@ -21,7 +21,9 @@
 #define HOMEPAGE  "http://www.raspberrypi.org/help/"
 
 /* Location to download the list of available distributions from */
-#define DEFAULT_REPO_SERVER  "http://downloads.raspberrypi.org/os_list_v2.json"
+//  #define DEFAULT_REPO_SERVER  "http://downloads.raspberrypi.org/os_list_v2.json"
+//#define DEFAULT_REPO_SERVER  "http://neilsh-800/os_list_v2.json"
+#define DEFAULT_REPO_SERVER  "http://neilsh-800.redmond.corp.microsoft.com/os_list_v2-private.json"
 
 /* Size of recovery FAT partition in MB.
  * First partition starts at offset 1 MB (sector 2048)
