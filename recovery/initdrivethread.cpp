@@ -280,17 +280,13 @@ bool InitDriveThread::method_resizePartitions()
     // Align on 4 MiB boundary
     startOfExtended += 8192-(startOfExtended % 8192);
 
-// BUGBUG - reserve space for WinIOT
-    startOfExtended += 5000 * 2048;    
-//
-
     int sizeOfDisk = sizeofSDCardInBlocks();
     int sizeOfExtended = sizeOfDisk - startOfExtended;
 
     partitionTable  = QByteArray::number(startOfOurPartition)+","+QByteArray::number(sizeOfOurPartition)+",0E\n"; /* FAT partition */
     partitionTable += "0,0\n";
     partitionTable += "0,0\n";
-    partitionTable += QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended)+",X\n"; /* Extended partition with all remaining space */
+    partitionTable += QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended)+",05\n"; /* Extended partition with all remaining space */
     qDebug() << "Writing partition table" << partitionTable;
 
     /* Write out extended partition table with settings logical partition */
@@ -408,14 +404,14 @@ bool InitDriveThread::partitionDrive()
     int rescueBlocks = RESCUE_PARTITION_SIZE*1024*2;
 
     mbr_table extended_mbr;
-    int startOfExtended = 2048+rescueBlocks + 5000 * 2048;  // reserve space for WinIoT
+    int startOfExtended = 2048+rescueBlocks;
     int sizeOfDisk = sizeofSDCardInBlocks();
     int sizeOfExtended = sizeOfDisk - startOfExtended;
 
     partitionTable = "2048,"+QByteArray::number(rescueBlocks)+",0E\n"; /* FAT partition */
     partitionTable += "0,0\n";
     partitionTable += "0,0\n";
-    partitionTable += QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended)+",X\n"; /* Extended partition with all remaining space */
+    partitionTable += QByteArray::number(startOfExtended)+","+QByteArray::number(sizeOfExtended)+",05\n"; /* Extended partition with all remaining space */
 
     /* Write out empty extended partition table with signature */
     memset(&extended_mbr, 0, sizeof extended_mbr);

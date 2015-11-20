@@ -156,25 +156,12 @@ void MultiImageWriteThread::run()
     {
         emit statusUpdate(tr("Reallocating space for Windows IoT"));
 
-//        if (!reduceExtendedPartition(win10Fat + win10Ntfs))
-//            return;
-
-// BUGBUG
-        int startOfRecoveryPartition = getFileContents("/sys/class/block/mmcblk0p1/start").trimmed().toInt();
-        int sizeOfRecoveryPartition = getFileContents("/sys/class/block/mmcblk0p1/size").trimmed().toInt();
-        startSector = startOfRecoveryPartition + sizeOfRecoveryPartition;
-        // Align on 4 MiB boundary
-        startSector += 8192-(startSector % 8192);
-// BUGBUG
-
-        /* Reserve the space between recovery partition and extended partition */
-/*
-        if (!sfdisk(3, startSector - win10Fat - win10Ntfs, win10Fat, "c") ||
-            !sfdisk(4, startSector - win10Ntfs, win10Ntfs, "7"))
+        /* Reserve the space at end of SD card */
+        if (!reduceExtendedPartition(win10Fat + win10Ntfs))
             return;
-*/
-        if (!sfdisk(2, startSector, win10Fat, "c") ||
-            !sfdisk(3, startSector + win10Fat, win10Ntfs, "7"))
+
+        if (!sfdisk(2, sizeofSDCardInBlocks() - win10Fat - win10Ntfs, win10Fat, "c") ||
+            !sfdisk(3, sizeofSDCardInBlocks() - win10Ntfs, win10Ntfs, "7"))
             return;
     }
 
@@ -216,11 +203,6 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
     qDebug() << "Processing OS:" << os_name;
 
     int startSector = getFileContents("/sys/class/block/mmcblk0p4/start").trimmed().toULongLong();
-
-    if (nameMatchesWinIoT(folder))
-    {
-        startSector = getFileContents("/sys/class/block/mmcblk0p2/start").trimmed().toULongLong();
-    }
 
     QVariantList partitions = Json::loadFromFile(folder+"/partitions.json").toMap().value("partitions").toList();
     QVariantList vpartitions;
@@ -300,25 +282,12 @@ bool MultiImageWriteThread::processImage(const QString &folder, const QString &f
             /* Windows IoT uses primary partition 2, not extended partitions */
             partdevice = "/dev/mmcblk0p2";
             _part--;
-// can't call sfdisk here because it complains about extended partitions created
-// by addPartitionEntry
-//             if (!sfdisk(3, startSector, partsizeSectors, QByteArray::number(parttype, 16)))
-//                return false;
-
-            startSector += partsizeSectors;
         }
         else if (nameMatchesWinIoT(folder) && (fstype == "NTFS" || fstype == "ntfs"))
         {
             /* Windows IoT uses primary partition 3, not extended partitions */
             partdevice = "/dev/mmcblk0p3";
             _part--;
-
-// can't call sfdisk here because it complains about extended partitions created
-// by addPartitionEntry
-//            if (!sfdisk(4, startSector, partsizeSectors, QByteArray::number(parttype, 16)))
-//                return false;
-
-            startSector += partsizeSectors;
         }
         else
         {
@@ -504,7 +473,7 @@ bool MultiImageWriteThread::reduceExtendedPartition(int size)
     }
 
     /* Let sfdisk update the extended partition */
-    if (!sfdisk(2, startOfExtended, sizeOfExtended - size, "X"))
+    if (!sfdisk(4, startOfExtended, sizeOfExtended - size, "05"))
         return false;
 
     return true;
