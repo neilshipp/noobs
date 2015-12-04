@@ -33,6 +33,7 @@ define RECOVERY_INSTALL_TARGET_CMDS
 	$(INSTALL) -m 0644 $(@D)/cmdline.txt $(BINARIES_DIR)/cmdline.txt
 	mkdir -p $(TARGET_DIR)/keymaps/
 	$(INSTALL) -m 0755 package/recovery/keymaps/* $(TARGET_DIR)/keymaps/
+	mkdir -p $(TARGET_DIR)/mnt2/
 endef
 
 $(eval $(generic-package))
