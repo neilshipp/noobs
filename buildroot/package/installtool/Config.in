@@ -1,0 +1,15 @@
+config BR2_PACKAGE_INSTALLTOOL
+        bool "installtool"
+    ### build dependencies
+    select BR2_PACKAGE_QT
+    select BR2_PACKAGE_QT_QTPNG
+    select BR2_PACKAGE_QT_GFX_LINUXFB
+    select BR2_PACKAGE_QT_GFX_VNC
+    select BR2_PACKAGE_QT_QTFREETYPE
+    select BR2_PACKAGE_QT_SYSTEMZLIB
+    select BR2_PACKAGE_QT_MOUSE_PC
+    select BR2_PACKAGE_QT_KEYBOARD_TTY
+    select BR2_PACKAGE_QJSON
+        help
+          recovery GUI 
+
