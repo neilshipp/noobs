@@ -633,7 +633,7 @@ bool MultiImageWriteThread::untar(const QString &tarball)
 {
     QString cmd = "sh -o pipefail -c \"";
 
-    if (tarball.startsWith("http:"))
+    if (tarball.startsWith("http"))
         cmd += "wget --no-verbose --tries=inf -O- "+tarball+" | ";
 
     if (tarball.endsWith(".gz"))
@@ -662,7 +662,7 @@ bool MultiImageWriteThread::untar(const QString &tarball)
         emit error(tr("Unknown compression format file extension. Expecting .lzo, .gz, .xz, .bz2 or .zip"));
         return false;
     }
-    if (!tarball.startsWith("http:"))
+    if (!tarball.startsWith("http"))
     {
         cmd += " "+tarball;
     }
@@ -695,7 +695,7 @@ bool MultiImageWriteThread::dd(const QString &imagePath, const QString &device)
 {
     QString cmd = "sh -o pipefail -c \"";
 
-    if (imagePath.startsWith("http:"))
+    if (imagePath.startsWith("http"))
         cmd += "wget --no-verbose --tries=inf -O- "+imagePath+" | ";
 
     if (imagePath.endsWith(".gz"))
@@ -725,7 +725,7 @@ bool MultiImageWriteThread::dd(const QString &imagePath, const QString &device)
         return false;
     }
 
-    if (!imagePath.startsWith("http:"))
+    if (!imagePath.startsWith("http"))
         cmd += " "+imagePath;
 
     cmd += " | dd of="+device+" conv=fsync obs=4M\"";
@@ -754,7 +754,7 @@ bool MultiImageWriteThread::partclone_restore(const QString &imagePath, const QS
 {
     QString cmd = "sh -o pipefail -c \"";
 
-    if (imagePath.startsWith("http:"))
+    if (imagePath.startsWith("http"))
         cmd += "wget --no-verbose --tries=inf -O- "+imagePath+" | ";
 
     if (imagePath.endsWith(".gz"))
@@ -784,7 +784,7 @@ bool MultiImageWriteThread::partclone_restore(const QString &imagePath, const QS
         return false;
     }
 
-    if (!imagePath.startsWith("http:"))
+    if (!imagePath.startsWith("http"))
         cmd += " "+imagePath;
 
     cmd += " | partclone.restore -q -s - -o "+device+" \"";
