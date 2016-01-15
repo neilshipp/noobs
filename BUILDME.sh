@@ -105,6 +105,8 @@ IMAGES_DIR="output/images"
 # Delete buildroot build directory to force rebuild
 if [ -e "$BUILD_DIR" ]; then
     rm -rf "$BUILD_DIR/recovery-$(get_package_version recovery)" || true
+    rm -rf "$BUILD_DIR/winiot-$(get_package_version winiot)" || true
+    rm -rf "$BUILD_DIR/installtool-$(get_package_version installtool)" || true
 fi
 
 SKIP_KERNEL_REBUILD=0
